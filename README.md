@@ -66,6 +66,8 @@ sudo ./sing-box-vps.sh status
 | 11 | 写入并应用 BBR sysctl 配置。 |
 | 12 | 恢复最近一份自动配置备份。 |
 | 13 | 停止并卸载软件包，但保留配置与连接记录。 |
+| 14 | 配置 Cloudflare Tunnel 和仅本机监听的 VLESS WebSocket 入站。 |
+| 15 | 查看 `cloudflared` 系统服务状态。 |
 
 ## 非交互命令
 
@@ -80,12 +82,15 @@ sudo ./sing-box-vps.sh status
 | `sudo ./sing-box-vps.sh check` | 校验配置并重启。 |
 | `sudo ./sing-box-vps.sh upgrade` | 升级 sing-box。 |
 | `sudo ./sing-box-vps.sh rollback` | 恢复最近备份。 |
+| `sudo ./sing-box-vps.sh cftunnel` | 配置 Cloudflare Tunnel + VLESS WebSocket。 |
+| `sudo ./sing-box-vps.sh cfstatus` | 查看 Cloudflare Tunnel 服务状态。 |
 
 ## 功能
 
 - 安装和更新官方 sing-box 软件包，配置官方签名 APT 源。
 - 新建多个 Shadowsocks 2022、Trojan TLS、VLESS TLS 入站。
 - Trojan/VLESS 可自动经 Certbot 申请 Let's Encrypt 证书，或使用已有 PEM 证书；续期后自动重启 sing-box。
+- 可选 Cloudflare Tunnel：部署本地 VLESS WebSocket 入站，并使用 Cloudflare 的远程管理 Tunnel 公开域名。
 - 每次写入前执行 `sing-box check`，成功后才替换配置；自动保留最近 10 份备份并可一键恢复。
 - 将连接信息保存到仅 root 可读的状态文件，菜单可再次导出连接串。
 - 集成 UFW 放行提示、服务状态、日志、升级、BBR、删除入站和保守卸载。
@@ -97,6 +102,17 @@ sudo ./sing-box-vps.sh status
 - 脚本会尝试给已启用的 UFW 放行端口，但无法替你修改云厂商安全组。
 - 连接串含密钥，请只在可信设备之间传递。请遵守所在地法律、网络与服务商规则。
 
+## Cloudflare Tunnel
+
+此功能使用 Cloudflare 官方 `cloudflared` APT 源和远程管理 Tunnel，不使用临时 `trycloudflare.com` 域名。使用前，请在 Cloudflare Zero Trust 的 **Networking > Tunnels** 创建 Tunnel，并为它添加一个 Published application：
+
+```text
+Hostname: 你的子域名，例如 cf.example.com
+Service URL: http://127.0.0.1:脚本显示的本地端口
+```
+
+在 Tunnel 的 **Add a replica** 页面复制 Token，脚本会隐藏输入并只交给 `cloudflared service install`，不会写入连接记录或显示在终端。Token 等同于运行该 Tunnel 的权限；若怀疑泄露，请在 Cloudflare 后台立即轮换。Cloudflare 的公网 Hostname 路由面向 HTTP/WebSocket；脚本因此创建 VLESS WebSocket 入站，而不把 Trojan、Shadowsocks 或 Hysteria2 的原始 TCP/UDP 直接放到 Tunnel 中。
+
 ## 官方资料
 
 - [Package Manager](https://sing-box.sagernet.org/installation/package-manager/)
@@ -104,3 +120,5 @@ sudo ./sing-box-vps.sh status
 - [Trojan Inbound](https://sing-box.sagernet.org/configuration/inbound/trojan/)
 - [VLESS Inbound](https://sing-box.sagernet.org/configuration/inbound/vless/)
 - [TLS](https://sing-box.sagernet.org/configuration/shared/tls/)
+- [Cloudflare Tunnel Setup](https://developers.cloudflare.com/tunnel/setup/)
+- [Cloudflare Tunnel Tokens](https://developers.cloudflare.com/tunnel/advanced/tunnel-tokens/)

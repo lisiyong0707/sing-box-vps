@@ -213,6 +213,10 @@ random_token() {
   openssl rand -hex 24
 }
 
+random_path() {
+  printf '/%s' "$(openssl rand -hex 12)"
+}
+
 new_uuid() {
   sing-box generate uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid
 }
@@ -352,6 +356,75 @@ deploy_vless() {
   printf '\n客户端连接串：\n%s\n\n' "$uri"
 }
 
+install_cloudflared() {
+  require_apt
+  info "配置 Cloudflare 官方 cloudflared APT 软件源"
+  install -d -m 755 /usr/share/keyrings
+  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+    -o /usr/share/keyrings/cloudflare-main.gpg
+  tee /etc/apt/sources.list.d/cloudflared.list >/dev/null <<'EOF'
+deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main
+EOF
+  apt-get update
+  apt-get install -y cloudflared
+}
+
+deploy_cloudflare_tunnel() {
+  ensure_installed
+  create_base_config
+  local domain port path path_encoded uuid tag inbound candidate uri tunnel_token
+
+  if systemctl is-active --quiet cloudflared 2>/dev/null; then
+    die "检测到正在运行的 cloudflared 服务。为避免覆盖现有 Tunnel，本脚本不会修改它。"
+  fi
+
+  domain=$(ask_required "Cloudflare 已托管的公网域名（例如 cf.example.com）")
+  valid_hostname "$domain" || die "域名格式不正确。"
+  port=$(ask_port "本地 VLESS WebSocket 端口（仅监听 127.0.0.1）" 10000)
+  ensure_port_available "$port"
+  path=$(random_path)
+  uuid=$(new_uuid)
+  tag="vless-ws-cf-${port}"
+
+  printf '\n请先在 Cloudflare Zero Trust 后台创建远程管理 Tunnel，并添加 Published application：\n'
+  printf '  Hostname: %s\n' "$domain"
+  printf '  Service URL: http://127.0.0.1:%s\n' "$port"
+  printf '完成后，在 Tunnel 的 Add a replica 页面复制 Token。\n\n'
+  confirm "已创建上述 Tunnel 路由，继续安装连接器" N || return
+
+  read -r -s -p "Cloudflare Tunnel Token（输入不回显）: " tunnel_token
+  printf '\n'
+  [[ -n $tunnel_token ]] || die "Tunnel Token 不能为空。"
+
+  install_cloudflared
+  info "安装 Cloudflare Tunnel 系统服务"
+  cloudflared service install "$tunnel_token"
+  systemctl enable --now cloudflared
+  systemctl is-active --quiet cloudflared || die "cloudflared 服务未能启动，请检查 journalctl -u cloudflared。"
+
+  inbound=$(jq -n --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" --arg path "$path" \
+    '{type:"vless",tag:$tag,listen:"127.0.0.1",listen_port:$port,users:[{name:"default",uuid:$uuid}],transport:{type:"ws",path:$path}}')
+  candidate=$(mktemp)
+  jq --argjson inbound "$inbound" '.inbounds += [$inbound]' "$CONFIG_FILE" > "$candidate"
+  apply_candidate "$candidate"
+  rm -f "$candidate"
+
+  path_encoded=$(jq -nr --arg path "$path" '$path | @uri')
+  uri="vless://${uuid}@${domain}:443?encryption=none&security=tls&type=ws&host=${domain}&path=${path_encoded}&sni=${domain}#sing-box-CF-Tunnel"
+  save_connection "vless-ws-cloudflare-tunnel" "$tag" "$domain" 443 "$uri"
+  ok "Cloudflare Tunnel 与本地 VLESS WebSocket 入站已部署"
+  printf '\n客户端连接串：\n%s\n\n' "$uri"
+}
+
+show_cloudflared_status() {
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    warn "cloudflared 尚未安装。"
+    return
+  fi
+  cloudflared --version
+  systemctl --no-pager --full status cloudflared || true
+}
+
 show_connections() {
   ensure_dirs
   if [[ $(jq '.connections | length' "$STATE_FILE") -eq 0 ]]; then
@@ -475,6 +548,8 @@ print_menu() {
   printf '11) 启用 BBR\n'
   printf '12) 恢复最近配置备份\n'
   printf '13) 卸载 sing-box（保留配置）\n'
+  printf '14) 配置 Cloudflare Tunnel + VLESS WebSocket\n'
+  printf '15) 查看 Cloudflare Tunnel 状态\n'
   printf '0) 退出\n\n'
 }
 
@@ -497,6 +572,8 @@ menu() {
       11) enable_bbr ;;
       12) restore_backup ;;
       13) uninstall_sing_box ;;
+      14) deploy_cloudflare_tunnel ;;
+      15) show_cloudflared_status ;;
       0) exit 0 ;;
       *) warn "无效选择。" ;;
     esac
@@ -504,7 +581,7 @@ menu() {
 }
 
 usage() {
-  printf '用法：sudo bash %s [menu|install|ss|trojan|vless|status|links|check|logs|upgrade|bbr|rollback|remove|uninstall]\n' "$0"
+  printf '用法：sudo bash %s [menu|install|ss|trojan|vless|cftunnel|cfstatus|status|links|check|logs|upgrade|bbr|rollback|remove|uninstall]\n' "$0"
 }
 
 main() {
@@ -518,6 +595,8 @@ main() {
     ss) deploy_shadowsocks ;;
     trojan) deploy_trojan ;;
     vless) deploy_vless ;;
+    cftunnel) deploy_cloudflare_tunnel ;;
+    cfstatus) show_cloudflared_status ;;
     status) show_status ;;
     links) show_connections ;;
     check) validate_and_restart ;;
