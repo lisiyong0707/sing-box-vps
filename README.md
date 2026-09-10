@@ -9,6 +9,11 @@
 ```bash
 chmod +x sing-box-vps.sh
 sudo ./sing-box-vps.sh
+
+```
+## 打开面板
+```
+bash /tmp/sing-box-vps.sh
 ```
 
 脚本会显示交互菜单。建议先选择 `1` 安装官方 sing-box，再选择 `2`、`3` 或 `4` 创建入站。
