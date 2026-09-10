@@ -29,7 +29,7 @@ git push -u origin main
 首次安装可从本地电脑通过 SSH 执行。替换仓库名和 VPS 地址：
 
 ```bash
-ssh -t root@YOUR_VPS_IP 'curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USER/sing-box-vps/main/sing-box-vps.sh -o /tmp/sing-box-vps.sh && bash /tmp/sing-box-vps.sh'
+curl -fsSL https://raw.githubusercontent.com/lisiyong0707/sing-box-vps/main/sing-box-vps.sh -o /tmp/sing-box-vps.sh && bash /tmp/sing-box-vps.sh
 ```
 
 若 VPS 禁止 root 直接 SSH，使用普通 sudo 用户：
