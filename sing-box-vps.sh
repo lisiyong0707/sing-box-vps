@@ -11,6 +11,9 @@ readonly STATE_DIR="/var/lib/sing-box-vps"
 readonly STATE_FILE="${STATE_DIR}/connections.json"
 readonly BACKUP_DIR="${STATE_DIR}/backups"
 readonly CERT_HOOK="/etc/letsencrypt/renewal-hooks/deploy/restart-sing-box"
+readonly MANAGER_PATH="/usr/local/sbin/sing-box-vps"
+readonly SHORTCUT_PATH="/usr/local/bin/sb"
+readonly SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/lisiyong0707/sing-box-vps/main/sing-box-vps.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -138,7 +141,23 @@ EOF
   apt-get install -y sing-box
   ensure_dirs
   systemctl enable sing-box
+  install_manager
   ok "已安装 $(sing-box version | head -n 1)"
+}
+
+install_manager() {
+  local source_path=${BASH_SOURCE[0]}
+  if [[ ! -r $source_path ]]; then
+    warn "无法读取当前脚本，未创建 sb 快捷命令。请从本地文件或 curl 下载文件后运行一次。"
+    return
+  fi
+  install -D -m 700 "$source_path" "$MANAGER_PATH"
+  tee "$SHORTCUT_PATH" >/dev/null <<EOF
+#!/usr/bin/env bash
+exec ${MANAGER_PATH} "\$@"
+EOF
+  chmod 755 "$SHORTCUT_PATH"
+  ok "已创建快捷命令：sb"
 }
 
 ensure_installed() {
@@ -598,6 +617,73 @@ show_logs() {
   journalctl -u sing-box -n 120 --no-pager -o cat
 }
 
+health_check() {
+  ensure_installed
+  local failed=0
+  printf '\nsing-box 配置： '
+  if sing-box check -c "$CONFIG_FILE" >/dev/null; then
+    printf '通过\n'
+  else
+    printf '失败\n'
+    failed=1
+  fi
+  printf 'sing-box 服务： '
+  if systemctl is-active --quiet sing-box; then
+    printf '运行中\n'
+  else
+    printf '未运行\n'
+    failed=1
+  fi
+  if command -v cloudflared >/dev/null 2>&1; then
+    printf 'cloudflared 服务： '
+    if systemctl is-active --quiet cloudflared; then
+      printf '运行中\n'
+    else
+      printf '未运行\n'
+      failed=1
+    fi
+  fi
+  printf '\n已配置监听端口：\n'
+  jq -r '.inbounds[]? | "- \(.tag) [\(.type)] \(.listen):\(.listen_port)"' "$CONFIG_FILE"
+  (( failed == 0 )) && ok "健康检查通过" || warn "健康检查发现异常，请查看 sb logs 或 systemctl status sing-box。"
+}
+
+show_certificate_expiry() {
+  ensure_installed
+  local cert_path end_date
+  local -a certs=()
+  mapfile -t certs < <(jq -r '.inbounds[]? | .tls.certificate_path? // empty' "$CONFIG_FILE" | sort -u)
+  if (( ${#certs[@]} == 0 )); then
+    warn "当前没有使用文件证书的 TLS 入站。"
+    return
+  fi
+  printf '\n证书到期信息：\n'
+  for cert_path in "${certs[@]}"; do
+    if [[ -r $cert_path ]]; then
+      end_date=$(openssl x509 -enddate -noout -in "$cert_path" | cut -d= -f2-)
+      printf -- '- %s\n  %s\n' "$cert_path" "$end_date"
+    else
+      warn "不可读取：$cert_path"
+    fi
+  done
+}
+
+update_manager() {
+  local candidate
+  candidate=$(mktemp)
+  info "从你的 GitHub 仓库下载管理脚本更新"
+  curl -fL --proto '=https' --tlsv1.2 "$SCRIPT_UPDATE_URL" -o "$candidate"
+  bash -n "$candidate"
+  install -D -m 700 "$candidate" "$MANAGER_PATH"
+  rm -f "$candidate"
+  tee "$SHORTCUT_PATH" >/dev/null <<EOF
+#!/usr/bin/env bash
+exec ${MANAGER_PATH} "\$@"
+EOF
+  chmod 755 "$SHORTCUT_PATH"
+  ok "管理脚本已更新。重新输入 sb 即可使用新版本。"
+}
+
 upgrade_sing_box() {
   ensure_installed
   info "更新 sing-box 官方软件包"
@@ -663,6 +749,10 @@ print_menu() {
   printf '16) 卸载 sing-box（保留配置）\n'
   printf '17) 配置 Cloudflare Tunnel + VLESS WebSocket\n'
   printf '18) 查看 Cloudflare Tunnel 状态\n'
+  printf '19) 健康检查\n'
+  printf '20) 查看 TLS 证书到期时间\n'
+  printf '21) 安装 / 修复 sb 快捷命令\n'
+  printf '22) 从 GitHub 更新管理脚本\n'
   printf '0) 退出\n\n'
 }
 
@@ -690,6 +780,10 @@ menu() {
       16) uninstall_sing_box ;;
       17) deploy_cloudflare_tunnel ;;
       18) show_cloudflared_status ;;
+      19) health_check ;;
+      20) show_certificate_expiry ;;
+      21) install_manager ;;
+      22) update_manager ;;
       0) exit 0 ;;
       *) warn "无效选择。" ;;
     esac
@@ -697,7 +791,7 @@ menu() {
 }
 
 usage() {
-  printf '用法：sudo bash %s [menu|install|ss|trojan|vless|hy2|tuic|reality|cftunnel|cfstatus|status|links|check|logs|upgrade|bbr|rollback|remove|uninstall]\n' "$0"
+  printf '用法：sb [menu|install|ss|trojan|vless|hy2|tuic|reality|cftunnel|cfstatus|status|links|check|logs|health|certs|self-update|upgrade|bbr|rollback|remove|uninstall]\n'
 }
 
 main() {
@@ -720,6 +814,9 @@ main() {
     links) show_connections ;;
     check) validate_and_restart ;;
     logs) show_logs ;;
+    health) health_check ;;
+    certs) show_certificate_expiry ;;
+    self-update) update_manager ;;
     upgrade) upgrade_sing_box ;;
     bbr) enable_bbr ;;
     rollback) restore_backup ;;

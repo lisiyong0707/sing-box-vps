@@ -9,14 +9,25 @@
 ```bash
 chmod +x sing-box-vps.sh
 sudo ./sing-box-vps.sh
-
-```
-## 打开面板
-```
-bash /tmp/sing-box-vps.sh
 ```
 
 脚本会显示交互菜单。建议先选择 `1` 安装官方 sing-box，再选择 `2`、`3` 或 `4` 创建入站。
+
+安装完成后，脚本会复制自身到 `/usr/local/sbin/sing-box-vps` 并创建全局快捷命令 `sb`。以后 SSH 登录 VPS 后，直接运行：
+
+```bash
+sudo sb
+```
+
+也可以直达常用运维操作：
+
+```bash
+sudo sb status
+sudo sb health
+sudo sb certs
+sudo sb logs
+sudo sb self-update
+```
 
 ## GitHub 与 SSH 一键部署
 
@@ -34,7 +45,7 @@ git push -u origin main
 首次安装可从本地电脑通过 SSH 执行。替换仓库名和 VPS 地址：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lisiyong0707/sing-box-vps/main/sing-box-vps.sh -o /tmp/sing-box-vps.sh && bash /tmp/sing-box-vps.sh
+ssh -t root@YOUR_VPS_IP 'curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USER/sing-box-vps/main/sing-box-vps.sh -o /tmp/sing-box-vps.sh && bash /tmp/sing-box-vps.sh'
 ```
 
 若 VPS 禁止 root 直接 SSH，使用普通 sudo 用户：
@@ -68,6 +79,8 @@ sudo ./sing-box-vps.sh status
 | 10、11、12 | 校验重启、查看状态及公网 IP、查看日志。 |
 | 13、14、15、16 | 升级、启用 BBR、恢复最近备份、卸载 sing-box。 |
 | 17、18 | 配置 Cloudflare Tunnel + VLESS WebSocket，或查看 `cloudflared` 状态。 |
+| 19、20 | 运行健康检查，或查看 TLS 证书到期时间。 |
+| 21、22 | 安装/修复 `sb` 快捷命令，或从你的 GitHub 仓库更新管理脚本。 |
 
 ## 非交互命令
 
@@ -87,6 +100,9 @@ sudo ./sing-box-vps.sh status
 | `sudo ./sing-box-vps.sh rollback` | 恢复最近备份。 |
 | `sudo ./sing-box-vps.sh cftunnel` | 配置 Cloudflare Tunnel + VLESS WebSocket。 |
 | `sudo ./sing-box-vps.sh cfstatus` | 查看 Cloudflare Tunnel 服务状态。 |
+| `sudo ./sing-box-vps.sh health` | 检查配置、服务与监听端口。 |
+| `sudo ./sing-box-vps.sh certs` | 查看所有文件证书的到期时间。 |
+| `sudo ./sing-box-vps.sh self-update` | 下载并校验你的 GitHub 仓库中的最新版脚本。 |
 
 ## 功能
 
@@ -98,6 +114,7 @@ sudo ./sing-box-vps.sh status
 - 每次写入前执行 `sing-box check`，成功后才替换配置；自动保留最近 10 份备份并可一键恢复。
 - 将连接信息保存到仅 root 可读的状态文件，菜单可再次导出连接串。
 - 集成 UFW 放行提示、服务状态、日志、升级、BBR、删除入站和保守卸载。
+- 提供 `sb` 全局快捷命令、健康检查、证书到期检查和管理脚本自更新。
 
 ## 使用前检查
 
