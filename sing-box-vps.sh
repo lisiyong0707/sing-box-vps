@@ -93,6 +93,15 @@ detect_public_ip() {
   hostname -I 2>/dev/null | awk '{print $1}'
 }
 
+detect_public_ipv6() {
+  local ip
+  for endpoint in https://api64.ipify.org https://ifconfig.co/ip; do
+    ip=$(curl -6fsS --connect-timeout 3 --max-time 6 "$endpoint" 2>/dev/null || true)
+    [[ $ip == *:* ]] && { printf '%s' "$ip"; return; }
+  done
+  return 0
+}
+
 ask_server_address() {
   local default value
   default=$(detect_public_ip)
@@ -219,6 +228,15 @@ random_path() {
 
 new_uuid() {
   sing-box generate uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid
+}
+
+generate_reality_keypair() {
+  local keypair private_key public_key
+  keypair=$(sing-box generate reality-keypair)
+  private_key=$(awk -F': ' '/PrivateKey/ {print $2}' <<<"$keypair")
+  public_key=$(awk -F': ' '/PublicKey/ {print $2}' <<<"$keypair")
+  [[ -n $private_key && -n $public_key ]] || die "无法生成 Reality 密钥对。"
+  printf '%s|%s' "$private_key" "$public_key"
 }
 
 save_connection() {
@@ -356,6 +374,93 @@ deploy_vless() {
   printf '\n客户端连接串：\n%s\n\n' "$uri"
 }
 
+deploy_hysteria2() {
+  ensure_installed
+  create_base_config
+  local domain port paths cert key password obfs_password tag tls inbound candidate uri
+  domain=$(ask_required "Hysteria2 TLS 域名")
+  valid_hostname "$domain" || die "域名格式不正确。"
+  port=$(ask_port "Hysteria2 UDP 监听端口" 8443)
+  ensure_port_available "$port"
+  paths=$(obtain_tls_paths "$domain")
+  cert=${paths%%|*}
+  key=${paths#*|}
+  password=$(random_token)
+  obfs_password=$(random_token)
+  tag="hy2-${port}"
+  tls=$(tls_json "$domain" "$cert" "$key")
+  inbound=$(jq -n --arg tag "$tag" --argjson port "$port" --arg password "$password" --arg obfs "$obfs_password" --argjson tls "$tls" \
+    '{type:"hysteria2",tag:$tag,listen:"::",listen_port:$port,network:"udp",users:[{name:"default",password:$password}],obfs:{type:"salamander",password:$obfs},tls:$tls}')
+  candidate=$(mktemp)
+  jq --argjson inbound "$inbound" '.inbounds += [$inbound]' "$CONFIG_FILE" > "$candidate"
+  apply_candidate "$candidate"
+  rm -f "$candidate"
+  uri="hysteria2://${password}@${domain}:${port}?sni=${domain}&obfs=salamander&obfs-password=${obfs_password}#sing-box-Hysteria2-${port}"
+  save_connection "hysteria2" "$tag" "$domain" "$port" "$uri"
+  open_firewall_port "$port" udp
+  ok "Hysteria2 已部署"
+  printf '\n客户端连接串：\n%s\n\n' "$uri"
+}
+
+deploy_tuic() {
+  ensure_installed
+  create_base_config
+  local domain port paths cert key uuid password tag tls inbound candidate uri
+  domain=$(ask_required "TUIC TLS 域名")
+  valid_hostname "$domain" || die "域名格式不正确。"
+  port=$(ask_port "TUIC UDP 监听端口" 8443)
+  ensure_port_available "$port"
+  paths=$(obtain_tls_paths "$domain")
+  cert=${paths%%|*}
+  key=${paths#*|}
+  uuid=$(new_uuid)
+  password=$(random_token)
+  tag="tuic-${port}"
+  tls=$(tls_json "$domain" "$cert" "$key")
+  inbound=$(jq -n --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" --arg password "$password" --argjson tls "$tls" \
+    '{type:"tuic",tag:$tag,listen:"::",listen_port:$port,network:"udp",users:[{name:"default",uuid:$uuid,password:$password}],congestion_control:"bbr",zero_rtt_handshake:false,tls:$tls}')
+  candidate=$(mktemp)
+  jq --argjson inbound "$inbound" '.inbounds += [$inbound]' "$CONFIG_FILE" > "$candidate"
+  apply_candidate "$candidate"
+  rm -f "$candidate"
+  uri="tuic://${uuid}:${password}@${domain}:${port}?congestion_control=bbr&sni=${domain}#sing-box-TUIC-${port}"
+  save_connection "tuic" "$tag" "$domain" "$port" "$uri"
+  open_firewall_port "$port" udp
+  ok "TUIC 已部署"
+  printf '\n客户端连接串：\n%s\n\n' "$uri"
+}
+
+deploy_vless_reality() {
+  ensure_installed
+  create_base_config
+  local host port handshake keypair private_key public_key short_id uuid tag reality tls inbound candidate uri
+  host=$(ask_server_address)
+  port=$(ask_port "VLESS Reality TCP 监听端口" 443)
+  ensure_port_available "$port"
+  handshake=$(ask_required "Reality 握手域名（必须可从 VPS 访问，例如 www.cloudflare.com）")
+  valid_hostname "$handshake" || die "握手域名格式不正确。"
+  keypair=$(generate_reality_keypair)
+  private_key=${keypair%%|*}
+  public_key=${keypair#*|}
+  short_id=$(openssl rand -hex 4)
+  uuid=$(new_uuid)
+  tag="vless-reality-${port}"
+  reality=$(jq -n --arg handshake "$handshake" --arg private_key "$private_key" --arg short_id "$short_id" \
+    '{enabled:true,handshake:{server:$handshake,server_port:443},private_key:$private_key,short_id:[$short_id]}')
+  tls=$(jq -n --argjson reality "$reality" '{enabled:true,reality:$reality}')
+  inbound=$(jq -n --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" --argjson tls "$tls" \
+    '{type:"vless",tag:$tag,listen:"::",listen_port:$port,users:[{name:"default",uuid:$uuid,flow:"xtls-rprx-vision"}],tls:$tls}')
+  candidate=$(mktemp)
+  jq --argjson inbound "$inbound" '.inbounds += [$inbound]' "$CONFIG_FILE" > "$candidate"
+  apply_candidate "$candidate"
+  rm -f "$candidate"
+  uri="vless://${uuid}@${host}:${port}?encryption=none&security=reality&type=tcp&flow=xtls-rprx-vision&sni=${handshake}&fp=chrome&pbk=${public_key}&sid=${short_id}#sing-box-VLESS-Reality-${port}"
+  save_connection "vless-reality" "$tag" "$host" "$port" "$uri"
+  open_firewall_port "$port" tcp
+  ok "VLESS Reality 已部署"
+  printf '\n客户端连接串：\n%s\n\n' "$uri"
+}
+
 install_cloudflared() {
   require_apt
   info "配置 Cloudflare 官方 cloudflared APT 软件源"
@@ -374,8 +479,8 @@ deploy_cloudflare_tunnel() {
   create_base_config
   local domain port path path_encoded uuid tag inbound candidate uri tunnel_token
 
-  if systemctl is-active --quiet cloudflared 2>/dev/null; then
-    die "检测到正在运行的 cloudflared 服务。为避免覆盖现有 Tunnel，本脚本不会修改它。"
+  if command -v cloudflared >/dev/null 2>&1 || systemctl list-unit-files --no-legend 2>/dev/null | grep -q '^cloudflared\.service'; then
+    die "检测到已有 cloudflared 安装或服务。为避免覆盖现有 Tunnel，本脚本不会修改它。"
   fi
 
   domain=$(ask_required "Cloudflare 已托管的公网域名（例如 cf.example.com）")
@@ -474,8 +579,13 @@ validate_and_restart() {
 
 show_status() {
   ensure_installed
+  local public_ipv4 public_ipv6
+  public_ipv4=$(detect_public_ip)
+  public_ipv6=$(detect_public_ipv6)
   printf '\nsing-box: '
   sing-box version | head -n 1
+  printf '公网 IPv4: %s\n' "${public_ipv4:-未检测到}"
+  printf '公网 IPv6: %s\n' "${public_ipv6:-未检测到}"
   printf '\n服务状态：\n'
   systemctl --no-pager --full status sing-box || true
   printf '\n已配置的入站：\n'
@@ -539,17 +649,20 @@ print_menu() {
   printf '2) 新建 Shadowsocks 2022 入站\n'
   printf '3) 新建 Trojan + TLS 入站\n'
   printf '4) 新建 VLESS + TLS 入站\n'
-  printf '5) 查看客户端连接串\n'
-  printf '6) 删除入站\n'
-  printf '7) 校验配置并重启\n'
-  printf '8) 查看服务状态\n'
-  printf '9) 查看最近日志\n'
-  printf '10) 更新 sing-box\n'
-  printf '11) 启用 BBR\n'
-  printf '12) 恢复最近配置备份\n'
-  printf '13) 卸载 sing-box（保留配置）\n'
-  printf '14) 配置 Cloudflare Tunnel + VLESS WebSocket\n'
-  printf '15) 查看 Cloudflare Tunnel 状态\n'
+  printf '5) 新建 Hysteria2 + TLS 入站\n'
+  printf '6) 新建 TUIC + TLS 入站\n'
+  printf '7) 新建 VLESS Reality 入站\n'
+  printf '8) 查看客户端连接串\n'
+  printf '9) 删除入站\n'
+  printf '10) 校验配置并重启\n'
+  printf '11) 查看服务状态与公网 IP\n'
+  printf '12) 查看最近日志\n'
+  printf '13) 更新 sing-box\n'
+  printf '14) 启用 BBR\n'
+  printf '15) 恢复最近配置备份\n'
+  printf '16) 卸载 sing-box（保留配置）\n'
+  printf '17) 配置 Cloudflare Tunnel + VLESS WebSocket\n'
+  printf '18) 查看 Cloudflare Tunnel 状态\n'
   printf '0) 退出\n\n'
 }
 
@@ -563,17 +676,20 @@ menu() {
       2) deploy_shadowsocks ;;
       3) deploy_trojan ;;
       4) deploy_vless ;;
-      5) show_connections ;;
-      6) remove_inbound ;;
-      7) validate_and_restart ;;
-      8) show_status ;;
-      9) show_logs ;;
-      10) upgrade_sing_box ;;
-      11) enable_bbr ;;
-      12) restore_backup ;;
-      13) uninstall_sing_box ;;
-      14) deploy_cloudflare_tunnel ;;
-      15) show_cloudflared_status ;;
+      5) deploy_hysteria2 ;;
+      6) deploy_tuic ;;
+      7) deploy_vless_reality ;;
+      8) show_connections ;;
+      9) remove_inbound ;;
+      10) validate_and_restart ;;
+      11) show_status ;;
+      12) show_logs ;;
+      13) upgrade_sing_box ;;
+      14) enable_bbr ;;
+      15) restore_backup ;;
+      16) uninstall_sing_box ;;
+      17) deploy_cloudflare_tunnel ;;
+      18) show_cloudflared_status ;;
       0) exit 0 ;;
       *) warn "无效选择。" ;;
     esac
@@ -581,7 +697,7 @@ menu() {
 }
 
 usage() {
-  printf '用法：sudo bash %s [menu|install|ss|trojan|vless|cftunnel|cfstatus|status|links|check|logs|upgrade|bbr|rollback|remove|uninstall]\n' "$0"
+  printf '用法：sudo bash %s [menu|install|ss|trojan|vless|hy2|tuic|reality|cftunnel|cfstatus|status|links|check|logs|upgrade|bbr|rollback|remove|uninstall]\n' "$0"
 }
 
 main() {
@@ -595,6 +711,9 @@ main() {
     ss) deploy_shadowsocks ;;
     trojan) deploy_trojan ;;
     vless) deploy_vless ;;
+    hy2) deploy_hysteria2 ;;
+    tuic) deploy_tuic ;;
+    reality) deploy_vless_reality ;;
     cftunnel) deploy_cloudflare_tunnel ;;
     cfstatus) show_cloudflared_status ;;
     status) show_status ;;

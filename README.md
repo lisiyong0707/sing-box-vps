@@ -63,16 +63,11 @@ sudo ./sing-box-vps.sh status
 | 2 | 新建 Shadowsocks 2022 入站，同时生成并保存连接串。 |
 | 3 | 新建 Trojan TCP + TLS 入站，可签发或导入证书。 |
 | 4 | 新建 VLESS TCP + TLS 入站，可签发或导入证书。 |
-| 5 | 导出本脚本创建过的连接串。 |
-| 6 | 按 tag 删除一个入站和对应保存的连接信息。 |
-| 7 | 使用 `sing-box check` 校验后重启服务。 |
-| 8、9 | 查看 systemd 服务状态和最近 120 行日志。 |
-| 10 | 从官方 APT 源升级 sing-box，并校验、重启。 |
-| 11 | 写入并应用 BBR sysctl 配置。 |
-| 12 | 恢复最近一份自动配置备份。 |
-| 13 | 停止并卸载软件包，但保留配置与连接记录。 |
-| 14 | 配置 Cloudflare Tunnel 和仅本机监听的 VLESS WebSocket 入站。 |
-| 15 | 查看 `cloudflared` 系统服务状态。 |
+| 5、6、7 | 分别新建 Hysteria2 TLS、TUIC TLS、VLESS Reality 入站。 |
+| 8、9 | 导出连接串或按 tag 删除入站。 |
+| 10、11、12 | 校验重启、查看状态及公网 IP、查看日志。 |
+| 13、14、15、16 | 升级、启用 BBR、恢复最近备份、卸载 sing-box。 |
+| 17、18 | 配置 Cloudflare Tunnel + VLESS WebSocket，或查看 `cloudflared` 状态。 |
 
 ## 非交互命令
 
@@ -82,6 +77,9 @@ sudo ./sing-box-vps.sh status
 | `sudo ./sing-box-vps.sh ss` | 进入 Shadowsocks 2022 创建流程。 |
 | `sudo ./sing-box-vps.sh trojan` | 进入 Trojan TLS 创建流程。 |
 | `sudo ./sing-box-vps.sh vless` | 进入 VLESS TLS 创建流程。 |
+| `sudo ./sing-box-vps.sh hy2` | 进入 Hysteria2 TLS 创建流程。 |
+| `sudo ./sing-box-vps.sh tuic` | 进入 TUIC TLS 创建流程。 |
+| `sudo ./sing-box-vps.sh reality` | 进入 VLESS Reality 创建流程。 |
 | `sudo ./sing-box-vps.sh status` | 查看运行状态。 |
 | `sudo ./sing-box-vps.sh links` | 输出保存的连接串。 |
 | `sudo ./sing-box-vps.sh check` | 校验配置并重启。 |
@@ -93,9 +91,10 @@ sudo ./sing-box-vps.sh status
 ## 功能
 
 - 安装和更新官方 sing-box 软件包，配置官方签名 APT 源。
-- 新建多个 Shadowsocks 2022、Trojan TLS、VLESS TLS 入站。
+- 新建多个 Shadowsocks 2022、Trojan TLS、VLESS TLS、Hysteria2 TLS、TUIC TLS、VLESS Reality 入站。
 - Trojan/VLESS 可自动经 Certbot 申请 Let's Encrypt 证书，或使用已有 PEM 证书；续期后自动重启 sing-box。
 - 可选 Cloudflare Tunnel：部署本地 VLESS WebSocket 入站，并使用 Cloudflare 的远程管理 Tunnel 公开域名。
+- 自动检测公网 IPv4/IPv6；Hysteria2、TUIC 会自动放行对应 UDP 端口。
 - 每次写入前执行 `sing-box check`，成功后才替换配置；自动保留最近 10 份备份并可一键恢复。
 - 将连接信息保存到仅 root 可读的状态文件，菜单可再次导出连接串。
 - 集成 UFW 放行提示、服务状态、日志、升级、BBR、删除入站和保守卸载。
